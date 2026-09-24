@@ -3,7 +3,7 @@
  * `files` (sha256 of the built bundle + logo) are filled in by
  * `scripts/build.ts` — this template is not the manifest itself.
  *
- * `fliks` covers the 4.x line, the first to accept `pluginApi` 1; the upper bound is mandatory,
+ * `fliks` covers the 4.x line, the first to refuse `pluginApi` 0; the upper bound is mandatory,
  * both here and in the catalog's CI. `test/manifest.test.ts` checks the range against a sibling
  * checkout's real version, or `FLIKS_CORE_VERSION` when there is none.
  */

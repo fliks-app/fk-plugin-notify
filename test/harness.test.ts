@@ -140,7 +140,7 @@ before(async () => {
     FLIKS_PLUGIN_SOCK: pluginSockPath,
     FLIKS_PLUGIN_TOKEN: token,
     FLIKS_PLUGIN_ID: 'fliks.notify',
-    FLIKS_API_VERSION: '0',
+    FLIKS_API_VERSION: '1',
     FLIKS_DB_URL: '',
     FLIKS_CFG_TARGET_URL: 'https://example.invalid/hook',
   };
@@ -177,7 +177,7 @@ test('speaks the full protocol without core: connect, hello, health, event, conf
 
   const hello = await channel.call<{ manifest: { id: string; kind: string }; token: string }>(
     'hello',
-    { pluginApi: 0, coreVersion: '2.0.1', config: {} },
+    { pluginApi: 1, coreVersion: '4.1.1', config: {} },
     10_000,
   );
   assert.equal(hello.token, token, 'hello must echo FLIKS_PLUGIN_TOKEN verbatim');
