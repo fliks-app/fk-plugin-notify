@@ -94,7 +94,7 @@ function buildZip(entries: Entry[]): Buffer {
 }
 
 /** Signs unsigned when `FK_NOTIFY_SIGNING_KEY` (a PEM Ed25519 private key) is
- *  absent — local installs use the core's `FLIKS_UNSIGNED_PLUGINS` allowlist
+ *  absent — local installs use the admin setting `plugins.allow_unsigned`
  *  instead of a production key. */
 export function packageArchive(): string {
   const manifestBytes = fs.readFileSync(path.join(DIST, 'plugin.json'));

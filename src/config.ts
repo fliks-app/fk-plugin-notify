@@ -1,10 +1,9 @@
 /**
  * Config arrives as `FLIKS_CFG_<KEY>` env vars, fixed for the life of the
  * process. A `config` note only names which settings keys changed, not
- * their new values (see `PluginApi['config']` in the Fliks contract) — a
- * running process has no way to fetch the new value without a core-side
- * method this phase does not implement, so the note is logged and the
- * effective config only actually changes on the next respawn.
+ * their new values (see `PluginApi['config']` in the Fliks contract); core's
+ * `config.get` could fetch the new value, but this phase just logs the note
+ * and leaves the effective config to change on the next respawn.
  */
 export interface PluginConfig {
   targetUrl: string | null;

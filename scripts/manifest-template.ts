@@ -3,10 +3,9 @@
  * `files` (sha256 of the built bundle + logo) are filled in by
  * `scripts/build.ts` — this template is not the manifest itself.
  *
- * `fliks` was derived by reading `backend/package.json`'s `version` in the
- * Fliks repo at authoring time (currently "2.0.1") and picking the loosest
- * range with a mandatory upper bound that still covers it: the whole 2.x
- * line, cut off before an unknown-shape 3.0.
+ * `fliks` covers the 4.x line, the first to refuse `pluginApi` 0; the upper bound is mandatory,
+ * both here and in the catalog's CI. `test/manifest.test.ts` checks the range against a sibling
+ * checkout's real version, or `FLIKS_CORE_VERSION` when there is none.
  */
 export const PLUGIN_ID = 'fliks.notify';
 
@@ -38,9 +37,9 @@ export const POLICY = {
 
 export const MANIFEST_TEMPLATE = {
   id: PLUGIN_ID,
-  pluginApi: 0,
+  pluginApi: 1,
   name: 'Notify',
-  fliks: '>=2.0.0 <3.0.0',
+  fliks: '>=4.0.0 <5.0.0',
   author: 'Fliks',
   description: 'Forwards Fliks domain events to an admin-configured HTTPS webhook, with bounded retry.',
   license: 'MIT',
