@@ -39,7 +39,7 @@ npm run build && npm run package
 ```
 
 Upload `dist/fliks-notify.fkplugin` from **Settings → Advanced → Plugins**. A `process` plugin must
-be signed, so a locally built archive needs its id in the server's `FLIKS_UNSIGNED_PLUGINS`.
+be signed, so a locally built archive needs the admin setting `plugins.allow_unsigned` turned on.
 
 ## Publish
 
