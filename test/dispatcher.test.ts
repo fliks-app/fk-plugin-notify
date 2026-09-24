@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
 import type { Socket } from 'net';
 import { attachDispatcher } from '../src/dispatcher';
+import { MAX_FRAME_BYTES } from '../src/protocol';
 
 /** Minimal stand-in for `net.Socket` — dispatcher only ever calls `.on`,
  *  `.write` and `.destroy` on it. */
@@ -52,6 +53,26 @@ test('replies with an error frame when the handler rejects', async () => {
   await new Promise((r) => setImmediate(r));
 
   assert.deepEqual(socket.repliesAsJson(), [{ i: 2, e: { c: 'ERR', m: 'boom' } }]);
+});
+
+test('still replies when the handler rejects with a non-Error value', async () => {
+  const socket = new FakeSocket();
+  attachDispatcher(socket as unknown as Socket, { health: () => Promise.reject('plain string') }, {});
+  socket.feed('{"i":4,"m":"health"}\n');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(socket.repliesAsJson(), [{ i: 4, e: { c: 'ERR', m: 'plain string' } }]);
+});
+
+test('replies ERR_RESULT_TOO_LARGE instead of sending an oversize result', async () => {
+  const socket = new FakeSocket();
+  attachDispatcher(socket as unknown as Socket, { http: async () => 'a'.repeat(MAX_FRAME_BYTES) }, {});
+  socket.feed('{"i":5,"m":"http"}\n');
+  await new Promise((r) => setImmediate(r));
+
+  const replies = socket.repliesAsJson() as { i: number; e: { c: string } }[];
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0]?.e.c, 'ERR_RESULT_TOO_LARGE');
 });
 
 test('replies with ERR_NO_METHOD for an unknown method', async () => {
