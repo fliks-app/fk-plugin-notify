@@ -13,7 +13,7 @@ needs are listed once, in section 6 of the sibling spec `fk-plugin-download/docs
 
 Contents: 0 findings, 1 inventory, 2 mapping onto the WIT world, 3 state and where it moves,
 4 database, 5 crate layout, 6 SDK, 7 test plan, 8 packaging and catalog, 9 deviations,
-10 open questions.
+10 decisions.
 
 ## 0. Findings that shape the port
 
@@ -34,10 +34,10 @@ Contents: 0 findings, 1 inventory, 2 mapping onto the WIT world, 3 state and whe
    item after the sixth attempt, so only five delays are ever used: 1, 5, 15, 30, 60 s, about
    111 s in total [ts:src/delivery-queue.ts:30-31,168-175]. The comment and the README say "about four
    minutes" [ts:src/delivery-queue.ts:24-27, README.md:14-15]. The port keeps the behaviour (6 attempts,
-   5 delays) and fixes the wording; open question 2.
+   5 delays) and fixes the wording (README fixed in the same PR; D8).
 4. **A DNS failure is a refusal, not a retry.** `checkTarget` returns `ok:false` on a failed lookup and
    `attempt` returns without scheduling a retry [ts:src/target-guard.ts:23-28,
-   ts:src/delivery-queue.ts:151-155]. Kept for parity; open question 3.
+   ts:src/delivery-queue.ts:151-155]. Kept for parity (D8).
 5. **Everything in memory today is correctness state** (the queue, its attempt counters, the log, the
    counters). It all moves; section 3.
 
@@ -103,12 +103,12 @@ opens a second socket to core and never uses it [ts:src/plugin.ts:62-67].
 - Port: `ui.contributions` one `settings.page` entry (`fliks-notify.settings.general`, weight 100,
   action route `/admin/settings/plugins/fliks.notify/general`) and `ui.configPages` one form page
   `general` with a single field `{key: 'target_url', type: 'url', labelKey, hint, secret: true}`
-  [assumed: webhook URLs often embed a token, open question 4]; `i18n` `en` and `fr`, keys
+  [webhook URLs often embed a token; decided, D8]; `i18n` `en` and `fr`, keys
   `notify.config.title`, `.subtitle`, `.target_url`, `.target_url_hint` (one root branch `notify`,
   no clash with `download`). Format as in `fk-plugin-download` [scripts/manifest-template.ts there].
   The delivery log and the test button stay API-only: the log route returns `{entries, stats}`,
   not the `{data, total, page, pageSize}` a `table` page reads, and a form page has no action
-  button. Showing them needs a UI contract change; out of scope, open question 5.
+  button. Showing them needs a UI contract change; out of scope, proposed issue in section 10.
 
 ## 2. Mapping onto the WIT world `fliks:plugin@2.0.0`
 
@@ -273,7 +273,7 @@ Needed: SDK-1 (`export!`, `manifest-check`), SDK-2 (only `config-get`), SDK-3 (s
 prefix dispatch, tolerant payloads), SDK-4 (`db`, `migrate`), SDK-6 (RFC 3339 now, for the test payload `at`), SDK-7 (one POST with the three timeouts, error taxonomy
 including `Denied` and `Dns`), SDK-8 (router, two routes), SDK-9 (`config::get`), SDK-10 (logging),
 SDK-11 (testing: component harness with a controllable clock and a programmable target), SDK-12
-(build and package), SDK-13 (licence; notify is MIT today, open question 6).
+(build and package), SDK-13 (licence `MIT OR Apache-2.0`, D5; notify stays MIT).
 Not needed: SDK-5 (executor and budgets beyond a plain deadline constant).
 
 Two behaviours the SDK must fix in writing because the notify tests depend on them: the HTTP client
@@ -339,15 +339,15 @@ here. The shared ones (compatibility row `2`, `package-plugin.mjs` accepting `ru
 
 1. New directory `plugins/fliks.notify/` (it has none): `src/plugin.json`, `src/plugin.wasm`,
    `src/logo.svg`, `README.md` pointing at this repository (as `fliks.download` does), and
-   `versions/0.2.0.json` [version assumed; `package.json` says 0.1.0, never published]:
+   `versions/1.0.0.json` (version decided, D7; `package.json` says 0.1.0, never published):
 
    ```json
    {
      "id": "fliks.notify", "name": "Notify",
      "description": "Forwards Fliks domain events to an admin-configured HTTPS webhook, with bounded retry.",
-     "author": "Fliks", "kind": "process", "version": "0.2.0",
+     "author": "Fliks", "kind": "process", "version": "1.0.0",
      "pluginApi": 2, "fliks": ">=5.0.0 <6.0.0",
-     "zipUrl": "https://fliks-app.github.io/fliks-plugin-catalog/plugins/fliks.notify/dist/fliks.notify-0.2.0.fkplugin",
+     "zipUrl": "https://github.com/fliks-app/fk-plugin-notify/releases/download/v1.0.0/fliks.notify-1.0.0.fkplugin",
      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
      "logo": "https://fliks-app.github.io/fliks-plugin-catalog/plugins/fliks.notify/logo.svg"
    }
@@ -357,8 +357,8 @@ here. The shared ones (compatibility row `2`, `package-plugin.mjs` accepting `ru
    hash. `name`, `description`, `author`, `kind`, `logo` are fixed for every later version.
 2. Because the plugin was never listed, the catalog card appears for the first time with Fliks 5; no
    existing entry changes and no immutable version is touched.
-3. Archive storage: the same repository-size question as for the download archive (download spec,
-   open question 4); a notify archive is small (about 1 MiB), so it matters less.
+3. Archive storage (D4): the signed archive is a GitHub Release asset of this repository and `zipUrl`
+   points there; the catalog stores no `dist/` archive for it.
 
 Plugin repository after the port: Rust on `main`; the Node code stays in git history (no release tag
 exists, so tag the last Node commit before the port lands [assumed]).
@@ -378,24 +378,27 @@ exists, so tag the last Node commit before the port lands [assumed]).
 | NT9 | log ring holds 200 entries including pending ones | prunes terminal rows beyond the newest 200; pending rows are bounded by the 200 cap | persistence |
 | NT10 | n/a | rows pending over one hour are marked `failed:lost` | host may drop a poison call |
 | NT11 | `health` detail from memory | from the database; a database outage fails `health` | state is in Postgres |
-| NT12 | README "about four minutes" | wording corrected to about two minutes (behaviour unchanged) | finding 3 |
+| NT12 | README "about four minutes" | README corrected in this PR to about two minutes (111 s); behaviour unchanged | finding 3 |
 
-## 10. Open questions
+## 10. Decisions
 
-1. **First release for Fliks 5.** Finding 1 means there is no migration story and `fliks.notify` has
-   never reached the catalog. Confirm that publishing it for the first time with Fliks 5 is the intent,
-   and the version number (`0.2.0` assumed).
-2. **Ladder.** Keep 6 attempts over about 111 s (parity, the README is wrong), or restore the "about
-   four minutes" the README promises by allowing a seventh attempt after 120 s?
-3. **DNS failures.** A transient lookup failure currently drops the delivery without retry. Keep for
-   parity, or retry it like a socket error (a one-line change in the outcome table)?
-4. **Secret URL.** Mark `target_url` as a `secret` form field (hidden in the UI and in `GET /api/settings`,
-   F5) because webhook URLs usually embed a token, at the cost of not being able to read it back?
-5. **Log and test button in the UI.** Out of scope here (needs a `table` response shape and a form
-   action). Do you want them in S8, which changes the route response shape of `/delivery-log`, or later?
-6. **SDK licence.** This repository says MIT in `package.json` (no `LICENSE` file); the SDK would sit in
-   the AGPL-3.0 Fliks repository. Same question as the download spec (its open question 5): permissive
-   SDK, or relicense notify?
-7. **Spike scope.** The S8 spike ports this plugin under a minimal host without UI or catalog; this spec
-   is a superset. Proposal: the spike delivers sections 2 to 5 without the config page, and the page,
-   the catalog entry and the deviations table land in the follow-up PR of this repository.
+Decided by the user after review (numbers shared with the download spec, section 10):
+
+- **D1, D2** n/a here (download only).
+- **D3** `fliks.notify` requests no `network.internal`; nothing to carry forward.
+- **D4** The signed archive is a GitHub Release asset; the catalog `zipUrl` points there.
+- **D5** The SDK crate is `MIT OR Apache-2.0`, so notify stays MIT.
+- **D6** Host `migrate` runs multi-statement scripts; host docs corrected elsewhere. Notify has one
+  migration.
+- **D7** Ships as `1.0.0`, no maintenance branch (there is no earlier published version).
+- **D8** Notify choices:
+  - It ships for the first time on Fliks 5 (finding 1).
+  - It keeps the 6-attempt ladder (1, 5, 15, 30, 60 s, about 111 s). The README is fixed in this PR
+    (lines 14-15: "about four minutes" becomes "about two minutes").
+  - A DNS failure stays final, as today.
+  - `target_url` is a `secret` form field.
+  - The delivery log and the test button in the UI come later. **Proposed `[rust-followup]` issue (not
+    opened):** "notify: show the delivery log and a test button in the settings UI", which needs a
+    `table`-shaped log route response and a form action.
+  - The S8 spike ports only the sections that need no UI or catalog (sections 2 to 5 without the config
+    page); the page, the catalog entry and the deviations land in a follow-up PR.
