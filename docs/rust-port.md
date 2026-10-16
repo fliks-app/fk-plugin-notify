@@ -18,7 +18,7 @@ Contents: 0 findings, 1 inventory, 2 mapping onto the WIT world, 3 state and whe
 ## 0. Findings that shape the port
 
 1. **There is no pluginApi 1 version to upgrade from.** The manifest template still says
-   `pluginApi: 0` and `fliks: '>=2.0.0 <3.0.0'` [ts:scripts/manifest-template.ts:42-43], and a test pins
+   `pluginApi: 0` and `fliks: '>=2.0.0 <3.0.0'` [ts:scripts/manifest-template.ts:41,43], and a test pins
    `pluginApi === 0` [ts:test/manifest.test.ts:71]. The catalog's `COMPATIBILITY.md` retired `0` with
    core 4.0.0. The plugin is also absent from `fliks-plugin-catalog` (only `fliks.download` and
    `fliks.webhooks` are there). So no Fliks 4 server can have it installed from the catalog, nothing
@@ -152,19 +152,23 @@ No instance holds anything a later call needs.
    `lastStatus = 'refused:no target configured'` when there is no target. `targetHost` is the URL's
    hostname, `unconfigured` or `invalid` as `hostOf` does [ts:src/delivery-queue.ts:182-189].
 3. No target: warn and stop.
-4. Capacity: `SELECT id FROM deliveries WHERE state IN ('pending','retrying') ORDER BY id` beyond 200
-   pending: for the oldest, `cancel-call("delivery:<oldest>")`, mark it `dropped:queue full`, bump
-   `droppedForCapacity`, warn. The bound is soft by at most the number of concurrent `http` instances
+4. Capacity: one statement marks the oldest live rows beyond 200 `dropped:queue full` and bumps
+   `droppedForCapacity` by the same count (CTE: `SELECT id ... WHERE state IN ('pending','retrying')
+   ORDER BY id DESC OFFSET 200 FOR UPDATE SKIP LOCKED`, the `UPDATE ... RETURNING id`, the stats
+   update `FROM` it), then `cancel-call("delivery:<id>")` per returned id, warn. Two enqueuers never
+   drop or count one row twice. The bound is soft by at most the number of concurrent `http` instances
    (the route and the event lane can enqueue at the same time).
 5. `schedule-call("delivery:<id>", 0, {"event": ..., "payload": ..., "n": 0})`. A payload over
    64 KiB (`ERR_VALIDATION`) marks the row `dropped:payload too large` [new, NT7].
 6. Housekeeping on the same call: prune terminal rows beyond the newest 200
-   (`DELETE FROM deliveries WHERE state NOT IN ('pending','retrying') AND id <= (SELECT id FROM
+   (`DELETE FROM deliveries WHERE state NOT IN ('pending','retrying','lost') AND id <= (SELECT id FROM
    deliveries ORDER BY id DESC OFFSET 200 LIMIT 1)`).
 
 `scheduled("delivery:<id>", payload, host_attempt)` (task lane, 5 min deadline [assumed]; one attempt is
 at most connect + first byte + between bytes at 5 s each):
 
+0. Read the row; missing or terminal (`delivered`, `failed`, `refused`, `dropped`): `Ok`, no POST
+   (a capacity drop or a re-fire after the outcome was written).
 1. Read `{event, payload, n}` ignoring unknown fields; `n` counts completed attempts. The host's
    `attempt` counts claims, including re-fires after a trap, so it is only logged.
 2. `target = config.get('target_url')`; none: `refused:no target configured`, final.
@@ -183,6 +187,10 @@ at most connect + first byte + between bytes at 5 s each):
 | anything else (non-2xx, timeout, refused connection, TLS, reset) and `n < 6` | `retrying`, `retrying:<reason>`, `attempt = n` | `schedule-call("delivery:<id>", BACKOFF_MS[n-1], {event, payload, n})` replaces the claimed row (that is how `Ok` after a re-schedule keeps it, `plugins.md` rule 55) |
 | the same and `n = 6` | `failed`, `failed:<reason>`, `failedPermanently` counter, warn | none |
 
+Every row write of step 5 is conditional (`WHERE id = $1 AND state IN ('pending','retrying','lost')`)
+and the retry `schedule-call` runs only when it updated a row, so a row dropped for capacity while
+its call ran is neither overwritten nor re-scheduled.
+
 6. Return `Ok` after the row and the schedule are written. `Err` is reserved for "could not write
    state": the host re-fires after its lease (6 min), which at worst repeats the POST. Delivery is
    at-least-once; the stable `id` in the body lets a receiver deduplicate.
@@ -199,9 +207,10 @@ pending calls until it is enabled again.
 A row stays `pending` or `retrying` only while a call is owed. If the host drops a poison call (20
 attempts, rule 55) or the event lane inserted a row and the host stopped before `schedule-call`, the row
 would read pending forever. At `start` and at every enqueue:
-`UPDATE deliveries SET state='failed', "lastStatus"='failed:lost' WHERE state IN ('pending','retrying')
-AND "updatedAt" < now() - interval '1 hour'` [assumed threshold: a delivery is live for about two minutes
-plus one lease].
+`UPDATE deliveries SET state='lost', "lastStatus"='failed:lost' WHERE state IN ('pending','retrying')
+AND "updatedAt" < now() - interval '3 hours'` [assumed threshold: past the host's 20 re-fires 6 min
+apart]. `lost` is display only: it leaves `queued` and the capacity count, is never pruned, and a call
+that still fires (after a long disable, a backlog) delivers it normally (step 0 accepts it).
 
 ## 4. Database
 
@@ -213,7 +222,7 @@ CREATE TABLE "deliveries" (
   "id"            bigserial PRIMARY KEY,
   "event"         text NOT NULL,
   "targetHost"    text NOT NULL,
-  "state"         text NOT NULL,      -- pending | retrying | delivered | failed | refused | dropped
+  "state"         text NOT NULL,      -- pending | retrying | lost | delivered | failed | refused | dropped
   "attempt"       integer NOT NULL DEFAULT 0,
   "lastStatus"    text NOT NULL,
   "createdAt"     timestamptz NOT NULL DEFAULT now(),
@@ -233,8 +242,10 @@ INSERT INTO "delivery_stats" ("id") VALUES (1);
 
 The payload is not stored: it lives in the scheduled call, the row keeps only what the log shows.
 Terminal transitions update the row and the counter in one
-statement (`WITH u AS (UPDATE "deliveries" ... RETURNING 1) UPDATE "delivery_stats" SET ...`) so they
-cannot disagree. Result types: `int8`, `int4`, `text`, `timestamptz` only (`plugins.md` rule 35).
+statement (`WITH u AS (UPDATE "deliveries" ... WHERE ... state IN (...) RETURNING 1) UPDATE
+"delivery_stats" SET ... WHERE EXISTS (SELECT 1 FROM u)`) so they cannot disagree: the counter moves
+only when the conditional row update did. Result types: `int8`, `int4`, `text`, `timestamptz`
+only (`plugins.md` rule 35).
 `GET /delivery-log` is `SELECT ... FROM deliveries ORDER BY id DESC LIMIT 100` plus the stats row and
 `SELECT count(*) ... WHERE state IN ('pending','retrying')` for `queued`.
 
@@ -274,7 +285,8 @@ prefix dispatch, tolerant payloads), SDK-4 (`db`, `migrate`), SDK-6 (RFC 3339 no
 including `Denied` and `Dns`), SDK-8 (router, two routes), SDK-9 (`config::get`), SDK-10 (logging),
 SDK-11 (testing: component harness with a controllable clock and a programmable target), SDK-12
 (build and package), SDK-13 (licence `MIT OR Apache-2.0`, D5; notify stays MIT).
-Not needed: SDK-5 (executor and budgets beyond a plain deadline constant).
+Not needed: SDK-5 (executor and budgets beyond a plain deadline constant), so SDK-7 must offer a
+blocking send (block on the response pollable) that works without the SDK-5 executor.
 
 Two behaviours the SDK must fix in writing because the notify tests depend on them: the HTTP client
 maps a host guard denial to its own error variant (not a generic I/O error), and `schedule` called
@@ -312,7 +324,8 @@ Local runs go through `fliks-heavy`, as for every Fliks build.
    - Two concurrent `task` instances never double-deliver one id (host claim); a trap after the POST
      re-delivers once with the same id (at-least-once).
    - Config read per attempt: changing `target_url` between attempts retargets the next one.
-   - `start` twice is idempotent; the stuck-row sweep marks old pending rows `failed:lost`.
+   - `start` twice is idempotent; the stuck-row sweep marks old pending rows `lost` and a late call still delivers
+     them; a call whose row was dropped for capacity mid-attempt neither overwrites nor re-schedules.
    - Routes: `GET /delivery-log` shape (newest first, 100 cap, stats), `POST /test-delivery` 202 and
      the event name rule, 404 elsewhere.
    - `plugin-manifest` vector set: this template re-expressed as a published first-party shape.
@@ -371,14 +384,15 @@ exists, so tag the last Node commit before the port lands [assumed]).
 | NT2 | URL fixed for the process life ("takes effect the next time the plugin restarts", README.md:37); item captured the URL at enqueue | read at every attempt; a queued delivery goes to the current URL; no URL at attempt time is `refused:no target configured` | live config, and the URL (often a secret) is not copied into `plugin_scheduled_calls` |
 | NT3 | `id` restarts at 1 each process; log and counters in memory | `bigserial` id stable across restarts; log and counters persist; counters count since install | table `deliveries` |
 | NT4 | one delivery at a time, FIFO | up to 2 at once (`task` lane), best-effort order | lane model |
-| NT5 | plugin resolves the host and refuses internal addresses itself, then the HTTP client resolves again | the host guard vets one resolution and connects to it (no rebinding window); `target-guard.ts` and `internal-address.ts` deleted; refusal text from the host denial | one implementation (plan §0 rule 2), F65-style |
+| NT5 | plugin resolves the host and refuses internal addresses itself, then the HTTP client resolves again | the host guard vets one resolution and connects to it (no rebinding window); `target-guard.ts` and `internal-address.ts` deleted; the guest sees only `HTTP-request-denied` (no address in it), so the log text is fixed | one implementation (plan §0 rule 2), F65-style |
 | NT6 | no settings page, no field (finding 2) | form page with `target_url`; `en`, `fr` strings | the README already promises it |
 | NT7 | payload size unbounded | a payload over 64 KiB is dropped (`dropped:payload too large`) | scheduled call limit |
 | NT8 | `User-Agent: fliks.notify/0.1.0` constant | `fliks.notify/<crate version>` | single version source |
 | NT9 | log ring holds 200 entries including pending ones | prunes terminal rows beyond the newest 200; pending rows are bounded by the 200 cap | persistence |
-| NT10 | n/a | rows pending over one hour are marked `failed:lost` | host may drop a poison call |
+| NT10 | n/a | rows pending over 3 hours show `failed:lost` (a late call still delivers them) | host may drop a poison call |
 | NT11 | `health` detail from memory | from the database; a database outage fails `health` | state is in Postgres |
 | NT12 | README "about four minutes" | README corrected in this PR to about two minutes (111 s); behaviour unchanged | finding 3 |
+| NT13 | start-up log line carries the target URL [ts:src/plugin.ts:83] | the URL is never logged | `target_url` is a secret (D8) |
 
 ## 10. Decisions
 
