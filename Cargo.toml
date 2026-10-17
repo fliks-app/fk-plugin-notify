@@ -1,0 +1,22 @@
+[package]
+name = "fk-plugin-notify"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# TODO: repin to a tag once S8 merges.
+fliks-plugin-sdk = { git = "https://github.com/fliks-app/fliks", branch = "server/s8" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
