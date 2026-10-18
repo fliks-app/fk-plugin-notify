@@ -28,9 +28,10 @@ jobs:
           targets: wasm32-wasip2
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
+      - run: cargo fmt --all --check
       # The wasm exports do not link natively, so native runs cover the lib and its tests only.
       - run: cargo clippy --lib --tests -- -D warnings
+      - run: cargo clippy -p xtask -- -D warnings
       - run: cargo clippy --target wasm32-wasip2 --all-targets -- -D warnings
       - run: cargo test --lib
       - run: cargo build --release --target wasm32-wasip2
