@@ -1,4 +1,4 @@
-//! In-memory [] for the native tests.
+//! In-memory [`Env`] for the native tests.
 
 use crate::env::{Counter, Entry, Env, ScheduleError, Stats};
 use crate::queue::{self, key};

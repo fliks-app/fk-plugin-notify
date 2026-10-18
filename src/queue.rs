@@ -104,6 +104,9 @@ pub fn attempt(env: &impl Env, key: &str, payload: &str) -> Result<(), String> {
     if live && state == "failed" {
         env.warn(&format!("delivery {id} failed after {n} attempts"));
     }
+    if live && state == "refused" {
+        env.warn(&format!("delivery {id} {status}"));
+    }
     Ok(())
 }
 
@@ -221,6 +224,7 @@ mod tests {
             }
             f.fire(id);
             assert_eq!(f.row(id), ("refused".into(), want.into(), 1));
+            assert_eq!(f.0.borrow().warns, [format!("delivery {id} {want}")]);
             assert!(f.0.borrow().calls.is_empty(), "{want}");
             assert_eq!(f.posts(), usize::from(posted), "{want}");
         }
