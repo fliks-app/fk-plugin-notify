@@ -116,7 +116,7 @@ async fn guard_and_dns_refusals_are_final() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn failed_attempts_follow_the_ladder_then_fail() {
-    let s = setup(Some("https://pub.test/hook"));
+    let s = setup(Some("https://pub.test/hook?t=s3cret"));
     s.targets.answer("pub.test", &["93.184.216.34"]);
     s.targets.route("93.184.216.34:443", closed_port());
     let Some(h) = Harness::start(s).await else {
@@ -132,6 +132,7 @@ async fn failed_attempts_follow_the_ladder_then_fail() {
         assert!(status_of(&h, id).await.starts_with("retrying:"));
         let calls = h.scheduled_calls().await;
         assert_eq!(calls.len(), 1);
+        assert!(!calls[0].payload.contains("s3cret"));
         assert!(
             (delay_ms - 2000..=delay_ms).contains(&calls[0].due_in_ms),
             "attempt {} retries in {delay_ms} ms, not {}",
@@ -149,6 +150,12 @@ async fn failed_attempts_follow_the_ladder_then_fail() {
     assert_eq!(l["stats"]["failedPermanently"], 1);
     assert_eq!(l["stats"]["queued"], 0);
     assert!(h.scheduled_calls().await.is_empty());
+    let logs = h.logs();
+    assert!(logs.iter().any(|l| l.contains("failed after 6 attempts")));
+    assert!(
+        logs.iter().all(|l| !l.contains("s3cret")),
+        "the URL is never logged"
+    );
     h.finish().await;
 }
 
