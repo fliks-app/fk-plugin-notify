@@ -13,6 +13,15 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -34,6 +43,10 @@ jobs:
             echo "::error::plugin.wasm is $size bytes, above the $MAX_WASM_BYTES limit"
             exit 1
           fi
+      - name: Run the component tests against Postgres
+        env:
+          FLIKS_HARNESS_PG_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: cargo test --test harness
       - uses: actions/upload-artifact@v4
         with:
           name: plugin.wasm

@@ -28,6 +28,17 @@ The wasm exports of the SDK do not link on a native target, so run `--lib` rathe
 the retry ladder (6 attempts, 1/5/15/30/60 s), the conditional writes, the capacity drop at 200,
 the lost sweep and the payloads. The SQL itself is not exercised natively.
 
+The SQL and the scheduled retries run in `tests/harness.rs`, which installs the built component
+under the real host (SDK `harness` feature) on a scratch database:
+
+```sh
+cargo build --release --target wasm32-wasip2
+FLIKS_HARNESS_PG_URL=postgres://user:pass@host/postgres cargo test --test harness
+```
+
+The URL is a superuser one; the harness creates and drops its own databases
+(`FLIKS_HARNESS_DB_PREFIX`, default `fliks_harness_`). Without it the tests skip locally and fail in CI.
+
 ## Install it on a dev instance
 
 Build the component, then add `version` and `files` (sha256 of `plugin.wasm` and `logo.svg`) to
