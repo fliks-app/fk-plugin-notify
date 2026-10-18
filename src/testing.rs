@@ -20,6 +20,7 @@ pub(crate) struct Row {
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) target: Option<String>,
+    pub(crate) target_error: Option<String>,
     pub(crate) rows: Vec<Row>,
     pub(crate) stats: [i64; 3], // delivered, failedPermanently, droppedForCapacity
     pub(crate) calls: BTreeMap<String, (u64, Value)>,
@@ -37,8 +38,9 @@ pub(crate) struct Fake(pub(crate) RefCell<State>);
 pub(crate) const LIVE: [&str; 3] = ["pending", "retrying", "lost"];
 
 impl Env for Fake {
-    fn target(&self) -> Option<String> {
-        self.0.borrow().target.clone()
+    fn target(&self) -> Result<Option<String>, String> {
+        let s = self.0.borrow();
+        s.target_error.clone().map_or(Ok(s.target.clone()), Err)
     }
     fn insert(&self, event: &str, host: &str, state: &str, status: &str) -> Result<i64, String> {
         let mut s = self.0.borrow_mut();
@@ -114,7 +116,7 @@ impl Env for Fake {
     }
     fn schedule(&self, key: &str, delay_ms: u64, payload: &Value) -> Result<(), ScheduleError> {
         if payload.to_string().len() > 64 * 1024 {
-            return Err(ScheduleError::TooLarge);
+            return Err(ScheduleError::Rejected("payload exceeds 64 KiB".into()));
         }
         self.0
             .borrow_mut()

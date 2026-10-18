@@ -23,7 +23,7 @@ pub(crate) fn key(id: i64) -> String {
 
 pub fn enqueue(env: &impl Env, event: &str, payload: Value) -> Result<i64, String> {
     let _ = env.sweep_stuck();
-    let target = env.target();
+    let target = env.target()?;
     let host = delivery::host_of(target.as_deref());
     if target.is_none() {
         let id = env.insert(event, &host, "refused", "refused:no target configured")?;
@@ -52,8 +52,8 @@ pub fn enqueue(env: &impl Env, event: &str, payload: Value) -> Result<i64, Strin
         &serde_json::to_value(&call).map_err(|e| e.to_string())?,
     ) {
         Ok(()) => {}
-        Err(ScheduleError::TooLarge) => {
-            env.finish(id, "dropped", "dropped:payload too large", 0, None)?;
+        Err(ScheduleError::Rejected(why)) => {
+            env.finish(id, "dropped", &format!("dropped:{why}"), 0, None)?;
         }
         Err(ScheduleError::Other(e)) => return Err(e),
     }
@@ -79,8 +79,9 @@ pub fn attempt(env: &impl Env, key: &str, payload: &str) -> Result<(), String> {
     };
     let n = call.n + 1;
     let outcome = match env.target() {
-        None => Outcome::Refused("no target configured".into()),
-        Some(t) => match delivery::parse_target(&t) {
+        Err(e) => Outcome::Failed(format!("config unavailable: {e}")),
+        Ok(None) => Outcome::Refused("no target configured".into()),
+        Ok(Some(t)) => match delivery::parse_target(&t) {
             Err(refused) => refused,
             Ok(url) => delivery::classify(env.post(
                 url.as_str(),
@@ -256,6 +257,32 @@ mod tests {
     }
 
     #[test]
+    fn a_config_error_at_attempt_time_retries_without_leaking_the_url() {
+        let f = Fake::with_target(URL);
+        let id = enqueue(&f, "e", json!({})).unwrap();
+        f.0.borrow_mut().target_error = Some("ERR_INTERNAL: db down".into());
+        f.fire(id);
+        assert_eq!(f.posts(), 0);
+        assert_eq!(
+            f.row(id).1,
+            "retrying:config unavailable: ERR_INTERNAL: db down"
+        );
+        assert!(f.0.borrow().calls.contains_key(&key(id)));
+        f.0.borrow_mut().target_error = None;
+        f.reply(Ok(200));
+        f.fire(id);
+        assert_eq!(f.row(id).0, "delivered");
+    }
+
+    #[test]
+    fn a_config_error_at_enqueue_is_an_error_not_a_refusal() {
+        let f = Fake::default();
+        f.0.borrow_mut().target_error = Some("boom".into());
+        assert!(enqueue(&f, "e", json!({})).is_err());
+        assert!(f.0.borrow().rows.is_empty());
+    }
+
+    #[test]
     fn the_201st_live_delivery_drops_the_oldest_and_cancels_its_call() {
         let f = Fake::with_target(URL);
         for _ in 0..200 {
@@ -277,7 +304,7 @@ mod tests {
         let id = enqueue(&f, "e", json!("x".repeat(70_000))).unwrap();
         assert_eq!(
             f.row(id),
-            ("dropped".into(), "dropped:payload too large".into(), 0)
+            ("dropped".into(), "dropped:payload exceeds 64 KiB".into(), 0)
         );
         assert!(f.0.borrow().calls.is_empty());
     }

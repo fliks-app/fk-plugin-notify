@@ -9,7 +9,8 @@ use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
 pub enum ScheduleError {
-    TooLarge,
+    /// The host refused the call (`ERR_VALIDATION`) and said why.
+    Rejected(String),
     Other(String),
 }
 
@@ -38,7 +39,7 @@ pub enum Counter {
 }
 
 pub trait Env {
-    fn target(&self) -> Option<String>;
+    fn target(&self) -> Result<Option<String>, String>;
     fn insert(&self, event: &str, host: &str, state: &str, status: &str) -> Result<i64, String>;
     fn state(&self, id: i64) -> Result<Option<String>, String>;
     /// Conditional on the row still being live; true when it changed.
@@ -69,11 +70,14 @@ fn db(e: fliks_plugin_sdk::db::DbError) -> String {
 }
 
 impl Env for Live {
-    fn target(&self) -> Option<String> {
-        let kv = host::config_get(Some(&["target_url".to_owned()])).ok()?;
-        let v = kv.into_iter().find(|(k, _)| k == "target_url")?.1;
-        let v = v.trim();
-        (!v.is_empty()).then(|| v.to_owned())
+    fn target(&self) -> Result<Option<String>, String> {
+        let kv = host::config_get(Some(&["target_url".to_owned()]))
+            .map_err(|e| format!("{}: {}", e.code, e.message))?;
+        let v = kv
+            .into_iter()
+            .find(|(k, _)| k == "target_url")
+            .map(|(_, v)| v);
+        Ok(v.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()))
     }
     fn insert(&self, event: &str, host: &str, state: &str, status: &str) -> Result<i64, String> {
         log_db::insert(event, host, state, status).map_err(db)
@@ -102,7 +106,7 @@ impl Env for Live {
     }
     fn schedule(&self, key: &str, delay_ms: u64, payload: &Value) -> Result<(), ScheduleError> {
         scheduled::schedule(key, delay_ms, payload).map_err(|e| match e.code.as_str() {
-            "ERR_VALIDATION" => ScheduleError::TooLarge,
+            "ERR_VALIDATION" => ScheduleError::Rejected(e.message),
             _ => ScheduleError::Other(e.message),
         })
     }
